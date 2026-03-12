@@ -1,0 +1,638 @@
+'(') {
+      consume(); // consume '('
+      const result = parseExpression();
+      const closeParen = peek();
+      if (!closeParen || closeParen.type !== 'paren' || closeParen.value !== ')') {
+        throw new CalculatorError('Missing closing parenthesis');
+      }
+      consume(); // consume ')'
+      return result;
+    }
+
+    throw new CalculatorError(`Unexpected token: ${JSON.stringify(token)}`);
+  }
+
+  const result = parseExpression();
+
+  if (pos < tokens.length) {
+    throw new CalculatorError(`Unexpected token at position ${pos}: ${JSON.stringify(tokens[pos])}`);
+  }
+
+  return result;
+}
+
+/**
+ * Format a number for display.
+ * Limits decimal places and handles very large/small numbers.
+ */
+export function formatResult(value: number): string {
+  if (!isFinite(value)) {
+    return 'Error';
+  }
+
+  // If it's an integer, return as-is
+  if (Number.isInteger(value)) {
+    return value.toString();
+  }
+
+  // Limit to 10 decimal places and remove trailing zeros
+  const formatted = value.toFixed(10).replace(/\.?0+$/, '');
+
+  // If the result is too long, use scientific notation
+  if (formatted.length > 15) {
+    return value.toExponential(6);
+  }
+
+  return formatted;
+}
+</file>
+
+<file path="src/entities/Calculation.ts">
+import 'reflect-metadata';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeorm';
+
+@Entity('calculations')
+export class Calculation {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: 'varchar', length: 500 })
+  expression!: string;
+
+  @Column({ type: 'varchar', length: 100 })
+  result!: string;
+
+  @CreateDateColumn()
+  createdAt!: Date;
+}
+</file>
+
+<file path="src/lib/database.ts">
+import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+import { Calculation } from '@/entities/Calculation';
+import path from 'path';
+
+let dataSource: DataSource | null = null;
+
+export async function getDataSource(): Promise<DataSource> {
+  if (dataSource && dataSource.isInitialized) {
+    return dataSource;
+  }
+
+  const dbPath = path.join(process.cwd(), 'data', 'calculator.db');
+
+  // Ensure the data directory exists
+  const fs = await import('fs');
+  const dataDir = path.dirname(dbPath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+
+  dataSource = new DataSource({
+    type: 'better-sqlite3',
+    database: dbPath,
+    entities: [Calculation],
+    synchronize: true,
+    logging: false,
+  });
+
+  await dataSource.initialize();
+  return dataSource;
+}
+</file>
+
+<file path="src/components/Button.tsx">
+'use client';
+
+import React from 'react';
+
+export type ButtonVariant = 'number' | 'operator' | 'action' | 'equals';
+
+interface ButtonProps {
+  label: string;
+  onClick: () => void;
+  variant?: ButtonVariant;
+  className?: string;
+  span?: number;
+  'data-testid'?: string;
+}
+
+const variantStyles: Record<ButtonVariant, string> = {
+  number:
+    'bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-white',
+  operator:
+    'bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white',
+  action:
+    'bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200',
+  equals:
+    'bg-green-600 hover:bg-green-500 active:bg-green-400 text-white',
+};
+
+export default function Button({
+  label,
+  onClick,
+  variant = 'number',
+  className = '',
+  span = 1,
+  'data-testid': testId,
+}: ButtonProps) {
+  const spanClass = span === 2 ? 'col-span-2' : '';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className={`
+        ${variantStyles[variant]}
+        ${spanClass}
+        rounded-xl text-xl font-semibold
+        py-4 px-2
+        transition-all duration-150
+        shadow-md hover:shadow-lg
+        active:scale-95
+        select-none
+        ${className}
+      `}
+    >
+      {label}
+    </button>
+  );
+}
+</file>
+
+<file path="src/components/Display.tsx">
+'use client';
+
+import React from 'react';
+
+interface DisplayProps {
+  expression: string;
+  result: string;
+  error?: string;
+}
+
+export default function Display({ expression, result, error }: DisplayProps) {
+  return (
+    <div className="bg-slate-900 rounded-2xl p-6 mb-4 min-h-[120px] flex flex-col justify-end shadow-inner">
+      {/* Expression line */}
+      <div
+        className="text-slate-400 text-right text-lg mb-2 font-mono truncate min-h-[28px]"
+        data-testid="display-expression"
+      >
+        {expression || '\u00A0'}
+      </div>
+
+      {/* Result / Error line */}
+      {error ? (
+        <div
+          className="text-red-400 text-right text-2xl font-mono truncate"
+          data-testid="display-error"
+        >
+          {error}
+        </div>
+      ) : (
+        <div
+          className="text-white text-right text-3xl font-bold font-mono truncate"
+          data-testid="display-result"
+        >
+          {result || '0'}
+        </div>
+      )}
+    </div>
+  );
+}
+</file>
+
+<file path="src/components/Calculator.tsx">
+'use client';
+
+import React, { useState, useCallback } from 'react';
+import Button from './Button';
+import Display from './Display';
+import { evaluate, formatResult, CalculatorError } from '@/lib/calculator';
+
+interface CalculatorProps {
+  onCalculationSaved?: () => void;
+}
+
+export default function Calculator({ onCalculationSaved }: CalculatorProps) {
+  const [expression, setExpression] = useState('');
+  const [displayValue, setDisplayValue] = useState('0');
+  const [error, setError] = useState('');
+  const [hasResult, setHasResult] = useState(false);
+
+  const appendToExpression = useCallback(
+    (value: string) => {
+      setError('');
+
+      if (hasResult) {
+        // If we just computed a result and user types a number, start fresh
+        if (/[0-9.]/.test(value)) {
+          setExpression(value);
+          setDisplayValue(value);
+          setHasResult(false);
+          return;
+        }
+        // If user types an operator, continue from the result
+        setHasResult(false);
+      }
+
+      const newExpression = expression + value;
+      setExpression(newExpression);
+      setDisplayValue(newExpression);
+    },
+    [expression, hasResult]
+  );
+
+  const handleClear = useCallback(() => {
+    setExpression('');
+    setDisplayValue('0');
+    setError('');
+    setHasResult(false);
+  }, []);
+
+  const handleBackspace = useCallback(() => {
+    if (hasResult) {
+      handleClear();
+      return;
+    }
+    setError('');
+    const newExpr = expression.slice(0, -1);
+    setExpression(newExpr);
+    setDisplayValue(newExpr || '0');
+  }, [expression, hasResult, handleClear]);
+
+  const handleEquals = useCallback(async () => {
+    if (!expression.trim()) return;
+
+    setError('');
+
+    try {
+      const result = evaluate(expression);
+      const formatted = formatResult(result);
+      setDisplayValue(formatted);
+      setHasResult(true);
+
+      // Save to backend
+      try {
+        const res = await fetch('/api/calculations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            expression,
+            result: formatted,
+          }),
+        });
+
+        if (res.ok && onCalculationSaved) {
+          onCalculationSaved();
+        }
+      } catch {
+        // Silently fail on network errors - calculation still shows locally
+        console.warn('Failed to save calculation to server');
+      }
+
+      // Update expression to show the result for chaining
+      setExpression(formatted);
+    } catch (err) {
+      if (err instanceof CalculatorError) {
+        setError(err.message);
+      } else {
+        setError('Error');
+      }
+      setHasResult(false);
+    }
+  }, [expression, onCalculationSaved]);
+
+  const handleToggleSign = useCallback(() => {
+    if (hasResult && displayValue !== '0') {
+      const current = parseFloat(displayValue);
+      if (!isNaN(current)) {
+        const toggled = formatResult(-current);
+        setDisplayValue(toggled);
+        setExpression(toggled);
+      }
+      return;
+    }
+
+    // Simple toggle: wrap/unwrap with negation
+    if (expression.startsWith('(-') && expression.endsWith(')')) {
+      const inner = expression.slice(2, -1);
+      setExpression(inner);
+      setDisplayValue(inner || '0');
+    } else if (expression) {
+      const newExpr = `(-${expression})`;
+      setExpression(newExpr);
+      setDisplayValue(newExpr);
+    }
+  }, [expression, displayValue, hasResult]);
+
+  const buttons = [
+    { label: 'C', onClick: handleClear, variant: 'action' as const },
+    { label: '±', onClick: handleToggleSign, variant: 'action' as const },
+    { label: '⌫', onClick: handleBackspace, variant: 'action' as const },
+    { label: '÷', onClick: () => appendToExpression('/'), variant: 'operator' as const },
+
+    { label: '7', onClick: () => appendToExpression('7'), variant: 'number' as const },
+    { label: '8', onClick: () => appendToExpression('8'), variant: 'number' as const },
+    { label: '9', onClick: () => appendToExpression('9'), variant: 'number' as const },
+    { label: '×', onClick: () => appendToExpression('*'), variant: 'operator' as const },
+
+    { label: '4', onClick: () => appendToExpression('4'), variant: 'number' as const },
+    { label: '5', onClick: () => appendToExpression('5'), variant: 'number' as const },
+    { label: '6', onClick: () => appendToExpression('6'), variant: 'number' as const },
+    { label: '−', onClick: () => appendToExpression('-'), variant: 'operator' as const },
+
+    { label: '1', onClick: () => appendToExpression('1'), variant: 'number' as const },
+    { label: '2', onClick: () => appendToExpression('2'), variant: 'number' as const },
+    { label: '3', onClick: () => appendToExpression('3'), variant: 'number' as const },
+    { label: '+', onClick: () => appendToExpression('+'), variant: 'operator' as const },
+
+    { label: '0', onClick: () => appendToExpression('0'), variant: 'number' as const, span: 2 },
+    { label: '.', onClick: () => appendToExpression('.'), variant: 'number' as const },
+    { label: '=', onClick: handleEquals, variant: 'equals' as const },
+  ];
+
+  return (
+    <div className="bg-slate-800 rounded-3xl p-5 shadow-2xl border border-slate-700">
+      <Display expression={expression} result={displayValue} error={error} />
+
+      <div className="grid grid-cols-4 gap-3">
+        {buttons.map((btn, index) => (
+          <Button
+            key={index}
+            label={btn.label}
+            onClick={btn.onClick}
+            variant={btn.variant}
+            span={btn.span}
+            data-testid={`btn-${btn.label}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="src/components/History.tsx">
+'use client';
+
+import React from 'react';
+import type { CalculationRecord } from '@/app/page';
+
+interface HistoryProps {
+  history: CalculationRecord[];
+  loading: boolean;
+  onClearHistory: () => void;
+}
+
+export default function History({ history, loading, onClearHistory }: HistoryProps) {
+  if (loading) {
+    return (
+      <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700">
+        <div className="text-center text-slate-400 py-8">
+          <div className="animate-pulse">Loading history...</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold text-white">History</h2>
+        {history.length > 0 && (
+          <button
+            onClick={onClearHistory}
+            className="text-sm text-red-400 hover:text-red-300 transition-colors px-3 py-1 rounded-lg hover:bg-slate-700"
+          >
+            Clear All
+          </button>
+        )}
+      </div>
+
+      {history.length === 0 ? (
+        <div className="text-center text-slate-500 py-8">
+          <p className="text-lg mb-1">No calculations yet</p>
+          <p className="text-sm">Your calculation history will appear here</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+          {history.map((calc) => (
+            <div
+              key={calc.id}
+              className="bg-slate-900 rounded-xl p-3 hover:bg-slate-850 transition-colors"
+            >
+              <div className="text-slate-400 text-sm font-mono truncate">
+                {calc.expression}
+              </div>
+              <div className="text-white text-lg font-bold font-mono">
+                = {calc.result}
+              </div>
+              <div className="text-slate-600 text-xs mt-1">
+                {new Date(calc.createdAt).toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+</file>
+
+<file path="src/app/api/calculations/route.ts">
+import { NextRequest, NextResponse } from 'next/server';
+import { getDataSource } from '@/lib/database';
+import { Calculation } from '@/entities/Calculation';
+
+export async function GET() {
+  try {
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+    const calculations = await repo.find({
+      order: { createdAt: 'DESC' },
+      take: 100,
+    });
+    return NextResponse.json(calculations);
+  } catch (error) {
+    console.error('GET /api/calculations error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch calculations' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { expression, result } = body;
+
+    if (
+      typeof expression !== 'string' ||
+      !expression.trim() ||
+      result === undefined ||
+      result === null
+    ) {
+      return NextResponse.json(
+        { error: 'Expression and result are required' },
+        { status: 400 }
+      );
+    }
+
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+
+    const calculation = repo.create({
+      expression: expression.trim(),
+      result: String(result),
+    });
+
+    const saved = await repo.save(calculation);
+    return NextResponse.json(saved, { status: 201 });
+  } catch (error) {
+    console.error('POST /api/calculations error:', error);
+    return NextResponse.json(
+      { error: 'Failed to save calculation' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE() {
+  try {
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+    await repo.clear();
+    return NextResponse.json({ message: 'History cleared successfully' });
+  } catch (error) {
+    console.error('DELETE /api/calculations error:', error);
+    return NextResponse.json(
+      { error: 'Failed to clear history' },
+      { status: 500 }
+    );
+  }
+}
+</file>
+
+<file path="Dockerfile">
+# Stage 1: Install dependencies
+FROM node:18-alpine AS deps
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+COPY package.json ./
+RUN npm install --frozen-lockfile || npm install
+
+# Stage 2: Build the application
+FROM node:18-alpine AS builder
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Remove the TypeScript config to avoid conflicts with next.config.js
+RUN rm -f next.config.ts
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+RUN npm run build
+
+# Stage 3: Production image
+FROM node:18-alpine AS runner
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy the standalone build
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Create data directory for SQLite
+RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]
+</file>
+
+<file path="docker-compose.yml">
+version: '3.8'
+
+services:
+  calculator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - calculator-data:/app/data
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  calculator-data:
+</file>
+
+Now delete the conflicting `next.config.ts`:
+
+<file path="next.config.ts">
+// This file is intentionally left as a redirect to next.config.js
+// Next.js should use next.config.js for configuration
+// This file exists to prevent build conflicts
+
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+  serverExternalPackages: ['typeorm', 'better-sqlite3'],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = config.externals || [];
+      if (Array.isArray(config.externals)) {
+        config.externals.push('better-sqlite3');
+      }
+    }
+    return config;
+  },
+};
+
+export default nextConfig;
+</file>
+
+Now the unit tests:
+
+<file path="src/lib/__tests__/calculator.test.ts">
+import { evaluate, formatResult, tokenize, CalculatorError } from '../calculator';
+
+describe('Calculator - tokenize', () => {
+  it('should tokenize simple numbers', () => {
+    const tokens = tokenize('42');
+    expect(tokens).toEqual([{ type: 'number', value: 42 }]);
+  });
+
+  it('should tokenize decimal numbers', () => {
+    const tokens = tokenize('3.14');
+    expect(tokens).toEqual([{ type: 'number', value: 3.14 }]);
+  });
+
+  it('should tokenize a simple expression', () => {
+    const tokens = tokenize('2+3');
+    expect(tokens).toEqual([
+      { type: 'number', value
