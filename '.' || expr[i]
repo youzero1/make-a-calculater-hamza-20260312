@@ -1,0 +1,30 @@
+'(')) {
+          if (expr[i] === '(') {
+            // Handle -(expression): push -1 * (
+            tokens.push({ type: 'number', value: -1 });
+            tokens.push({ type: 'operator', value: '*' });
+            continue;
+          }
+          let numStr = '';
+          while (i < expr.length && (isDigit(expr[i]) || expr[i] === '.')) {
+            numStr += expr[i];
+            i++;
+          }
+          const value = parseFloat(numStr);
+          if (isNaN(value)) {
+            throw new CalculatorError(`Invalid number: -${numStr}`);
+          }
+          tokens.push({ type: 'number', value: -value });
+          continue;
+        } else {
+          throw new CalculatorError('Unexpected minus sign');
+        }
+      } else {
+        tokens.push({ type: 'operator', value: '-' });
+        i++;
+        continue;
+      }
+    }
+
+    // Handle operators
+    if (char
