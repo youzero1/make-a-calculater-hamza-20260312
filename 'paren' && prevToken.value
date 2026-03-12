@@ -1,0 +1,5 @@
+'(');
+
+      if (isUnary) {
+        i++; // skip the minus
+        if (i < expr.length && (isDigit(expr[i]) || expr[i]
