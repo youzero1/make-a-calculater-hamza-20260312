@@ -1,0 +1,16 @@
+'*' || char === '/') {
+      tokens.push({ type: 'operator', value: char });
+      i++;
+      continue;
+    }
+
+    // Handle percentage (convert to /100)
+    if (char === '%') {
+      tokens.push({ type: 'operator', value: '/' });
+      tokens.push({ type: 'number', value: 100 });
+      i++;
+      continue;
+    }
+
+    // Handle parentheses
+    if (char
