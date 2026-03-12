@@ -1,0 +1,104 @@
+')') {
+      tokens.push({ type: 'paren', value: char });
+      i++;
+      continue;
+    }
+
+    throw new CalculatorError(`Unexpected character: ${char}`);
+  }
+
+  return tokens;
+}
+
+function isDigit(char: string): boolean {
+  return char >= '0' && char <= '9';
+}
+
+/**
+ * Parse and evaluate tokens using recursive descent parsing.
+ * Grammar:
+ *   expression = term (('+' | '-') term)*
+ *   term       = factor (('*' | '/') factor)*
+ *   factor     = NUMBER | '(' expression ')' | unary
+ */
+export function evaluate(expression: string): number {
+  if (!expression || expression.trim().length === 0) {
+    throw new CalculatorError('Empty expression');
+  }
+
+  const tokens = tokenize(expression);
+  if (tokens.length === 0) {
+    throw new CalculatorError('Empty expression');
+  }
+
+  let pos = 0;
+
+  function peek(): Token | undefined {
+    return tokens[pos];
+  }
+
+  function consume(): Token {
+    const token = tokens[pos];
+    if (!token) {
+      throw new CalculatorError('Unexpected end of expression');
+    }
+    pos++;
+    return token;
+  }
+
+  function parseExpression(): number {
+    let result = parseTerm();
+
+    while (pos < tokens.length) {
+      const token = peek();
+      if (!token || token.type !== 'operator' || (token.value !== '+' && token.value !== '-')) {
+        break;
+      }
+      consume();
+      const right = parseTerm();
+      if (token.value === '+') {
+        result += right;
+      } else {
+        result -= right;
+      }
+    }
+
+    return result;
+  }
+
+  function parseTerm(): number {
+    let result = parseFactor();
+
+    while (pos < tokens.length) {
+      const token = peek();
+      if (!token || token.type !== 'operator' || (token.value !== '*' && token.value !== '/')) {
+        break;
+      }
+      consume();
+      const right = parseFactor();
+      if (token.value === '*') {
+        result *= right;
+      } else {
+        if (right === 0) {
+          throw new CalculatorError('Division by zero');
+        }
+        result /= right;
+      }
+    }
+
+    return result;
+  }
+
+  function parseFactor(): number {
+    const token = peek();
+
+    if (!token) {
+      throw new CalculatorError('Unexpected end of expression');
+    }
+
+    if (token.type === 'number') {
+      consume();
+      return token.value;
+    }
+
+    if (token.type
